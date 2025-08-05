@@ -1,55 +1,58 @@
-# streamlit_client.py
-import streamlit as st
+import streamlit as st 
 import requests
+import uuid
 
 st.set_page_config(page_title="Employee Database Chatbot", page_icon="🤖")
 st.title("🤖 Employee Database Chatbot")
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-def query_mcp(question: str):
-    """Send question to MCP server and return a natural language answer."""
-    try:
-        response = requests.post(
-            "http://127.0.0.1:8000/call_tool",
-            json={
-                "tool": "rag_query",   # always go through RAGTool
-                "args": {"question": question}
-            },
-            timeout=30,
-        )
-        if response.status_code == 200:
-            data = response.json()
-            output = data.get("output", {})
-
-            # ✅ Prefer natural answer
-            if isinstance(output, dict):
-                return output.get("answer", "⚠️ No answer found.")
-            elif isinstance(output, str):
-                return output
+if "session_id" not in st.session_state:
+    with st.form("session_form"):
+        session_id_input = st.text_input("Enter your Session ID (leave blank to create a new one):")
+        submitted = st.form_submit_button("Start Session")
+        if submitted:
+            if session_id_input.strip():
+                st.session_state.session_id = session_id_input.strip()
             else:
-                return str(output)
+                st.session_state.session_id = str(uuid.uuid4())
+            st.session_state.messages = []
+            st.success(f"Your session ID: {st.session_state.session_id}")
 
-        return f"⚠️ Server returned {response.status_code}: {response.text}"
+if "session_id" in st.session_state:
+    def query_mcp(question: str):
+        try:
+            response = requests.post(
+                "http://127.0.0.1:8000/call_tool",
+                json={
+                "tool": "rag_query",
+                "args": {
+                    "question": question,
+                    "session_id": st.session_state.session_id
+                    }
+                },
+                timeout=30,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                output = data.get("output")
+                st.write("DEBUG OUTPUT:", output) 
 
-    except Exception as e:
-        return f"⚠️ Connection error: {e}"
+                if isinstance(output, dict):
+                    return output.get("answer", "No answer found.")
+                elif isinstance(output, str):
+                    return output
+                else:
+                    return "Unexpected response format."
 
-# Chat input
-user_input = st.chat_input("Ask a question about employees")
+            return f"Server returned {response.status_code}: {response.text}"
+        except Exception as e:
+            return f"Connection error: {e}"
 
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.spinner("Thinking..."):
-        answer = query_mcp(user_input)
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+    user_input = st.chat_input("Ask a question about employees")
+    if user_input:
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        with st.spinner("Thinking..."):
+            answer = query_mcp(user_input)
+        st.session_state.messages.append({"role": "assistant", "content": answer})
 
-for msg in st.session_state.messages:
-    role = "user" if msg["role"] == "user" else "assistant"
-    content = msg["content"]
-
-    if "|" in content and "---" in content:  # crude check for markdown table
-        st.chat_message(role).markdown(content)
-    else:
-        st.chat_message(role).write(content)
+    for msg in st.session_state.messages:
+        st.chat_message(msg["role"]).write(msg["content"])
